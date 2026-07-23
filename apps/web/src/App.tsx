@@ -960,7 +960,6 @@ function Agent() {
   const [evidence, setEvidence] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [edit, setEdit] = useState("");
-  const [fallback, setFallback] = useState("");
   const [scenarioId, setScenarioId] = useState("overall");
   const [dataRows, setDataRows] = useState(() =>
     editableAnalysisData.map((row) => ({ ...row })),
@@ -991,7 +990,6 @@ function Agent() {
       return;
     }
     setRunning(true);
-    setFallback("");
     try {
       const created = await api("/api/analysis/tasks", {
         method: "POST",
@@ -1021,9 +1019,6 @@ function Agent() {
           steps: old.steps.map((x: any) => (x.id === step.id ? step : x)),
         }));
       });
-      events.addEventListener("analysis.fallback", (event) =>
-        setFallback(JSON.parse((event as MessageEvent).data).reason),
-      );
       events.addEventListener("task.completed", () => {
         events.close();
         setRunning(false);
@@ -1280,14 +1275,6 @@ function Agent() {
                   <Button onClick={() => setEvidence(true)}>查看证据</Button>
                 }
               >
-                {fallback && (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message={fallback}
-                    className="result-alert"
-                  />
-                )}
                 <Typography.Title level={4}>总体判断</Typography.Title>
                 <Typography.Paragraph className="judgement">
                   {task.result.overallJudgement}
@@ -1706,16 +1693,6 @@ function DemoControl() {
     queryKey: ["health"],
     queryFn: () => api("/api/demo/health"),
   });
-  const setMode = async (mode: string) => {
-    await api("/api/demo/mode", {
-      method: "POST",
-      body: JSON.stringify({ mode }),
-    });
-    queryClient.invalidateQueries({ queryKey: ["health"] });
-    message.success(
-      `已切换到${mode === "cache" ? "缓存保障" : mode === "auto" ? "自动模式" : "实时模式"}`,
-    );
-  };
   const reset = async () => {
     await api("/api/demo/reset", { method: "POST" });
     queryClient.invalidateQueries();
@@ -1728,7 +1705,7 @@ function DemoControl() {
         <div>
           <Typography.Title level={2}>演示控制台</Typography.Title>
           <Typography.Text type="secondary">
-            现场演示保障：状态检查、模式切换与一键恢复
+            现场演示保障：Kimi K3 实时模型状态检查与一键恢复
           </Typography.Text>
         </div>
         <DemoTags />
@@ -1755,16 +1732,9 @@ function DemoControl() {
                       children: health.data.model,
                     },
                     {
-                      key: "cache",
-                      label: "缓存结果",
-                      children: (
-                        <Badge status="success" text={health.data.cache} />
-                      ),
-                    },
-                    {
-                      key: "mode",
-                      label: "当前模式",
-                      children: <Tag color="blue">{health.data.mode}</Tag>,
+                      key: "modelRequired",
+                      label: "调用策略",
+                      children: <Tag color="blue">仅 Kimi K3 实时调用</Tag>,
                     },
                     {
                       key: "scenario",
@@ -1779,11 +1749,21 @@ function DemoControl() {
                   ]}
                 />
                 <Divider />
-                <Space>
-                  <Button onClick={() => setMode("auto")}>自动模式</Button>
-                  <Button onClick={() => setMode("cache")}>缓存保障模式</Button>
-                  <Button onClick={() => setMode("live")}>实时模型模式</Button>
-                </Space>
+                <Alert
+                  type={
+                    health.data.modelRequired &&
+                    health.data.model === "Kimi K3 已配置"
+                      ? "success"
+                      : "error"
+                  }
+                  showIcon
+                  message={
+                    health.data.modelRequired &&
+                    health.data.model === "Kimi K3 已配置"
+                      ? "实时模型已配置，AI 分析将直接调用 Kimi K3"
+                      : "实时模型未配置，AI 分析不会执行"
+                  }
+                />
               </Card>
             </Col>
             <Col span={24} lg={10}>

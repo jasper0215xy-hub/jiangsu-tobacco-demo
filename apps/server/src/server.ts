@@ -208,14 +208,12 @@ type Task = {
   context: any;
   steps: any[];
   result: any;
-  fallback: boolean;
   confirmedBy?: string;
   confirmedAt?: string;
 };
 let tasks = new Map<string, Task>();
 let reports: any[] = [];
 let businessTasks: any[] = [];
-let mode: "auto" | "cache" | "live" = "auto";
 const hasLiveModel = () =>
   Boolean(process.env.MODEL_API_KEY && process.env.MODEL_BASE_URL);
 
@@ -621,49 +619,46 @@ function applyDataOverrides(
   return result;
 }
 
-/** Kimi K3 is called only on the server. The deterministic tool result remains the
- * source of facts; an unavailable or invalid model response safely keeps the cache draft. */
+/** Kimi K3 is called only on the server. The deterministic tool result is the
+ * evidence-bound input; the model must return a valid live response or the task fails. */
 async function enrichWithKimi(result: ReturnType<typeof analysisResult>) {
-  if (!hasLiveModel()) return { result, usedLiveModel: false };
-  try {
-    const baseUrl = process.env.MODEL_BASE_URL!.replace(/\/$/, "");
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.MODEL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: process.env.MODEL_NAME || "kimi-k3",
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              '你是经济运行分析的文字润色助手。不得增加任何数值、事实、原因或建议，只能将给定总体判断改写为专业、谨慎的中文；返回 JSON：{\\"overallJudgement\\":string}。',
-          },
-          {
-            role: "user",
-            content: JSON.stringify({ judgement: result.overallJudgement }),
-          },
-        ],
-      }),
-    });
-    if (!response.ok) throw new Error(`model status ${response.status}`);
-    const payload = (await response.json()) as any;
-    const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
-    // No digits prevents the model from adding unverified metric values to the evidence-bound result.
-    if (
-      typeof content.overallJudgement === "string" &&
-      content.overallJudgement.length > 20 &&
-      !/\d/.test(content.overallJudgement)
-    )
-      result.overallJudgement = content.overallJudgement;
-    return { result, usedLiveModel: true };
-  } catch {
-    return { result, usedLiveModel: false };
-  }
+  if (!hasLiveModel()) throw new Error("KIMI_MODEL_NOT_CONFIGURED");
+  const baseUrl = process.env.MODEL_BASE_URL!.replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.MODEL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: process.env.MODEL_NAME || "kimi-k3",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            '你是经济运行分析的文字润色助手。不得增加任何数值、事实、原因或建议，只能将给定总体判断改写为专业、谨慎的中文；返回 JSON：{\\"overallJudgement\\":string}。',
+        },
+        {
+          role: "user",
+          content: JSON.stringify({ judgement: result.overallJudgement }),
+        },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`KIMI_MODEL_HTTP_${response.status}`);
+  const payload = (await response.json()) as any;
+  const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
+  // No digits prevents the model from adding unverified metric values to the evidence-bound result.
+  if (
+    typeof content.overallJudgement !== "string" ||
+    content.overallJudgement.length <= 20 ||
+    /\d/.test(content.overallJudgement)
+  )
+    throw new Error("KIMI_MODEL_INVALID_RESPONSE");
+  result.overallJudgement = content.overallJudgement;
+  return result;
 }
 
 app.get("/api/portal/summary", async () =>
@@ -763,17 +758,27 @@ app.post("/api/analysis/tasks", async (req, reply) => {
     caseAnalysis(scenario),
     body.context?.data_overrides,
   );
-  const cacheOnly = mode === "cache" || !hasLiveModel();
-  const enriched = cacheOnly
-    ? { result: base, usedLiveModel: false }
-    : await enrichWithKimi(base);
-  const fallback = cacheOnly || !enriched.usedLiveModel;
+  let result;
+  try {
+    result = await enrichWithKimi(base);
+  } catch (error) {
+    return reply.code(503).send({
+      error: {
+        code: "KIMI_LIVE_MODEL_UNAVAILABLE",
+        message:
+          "Kimi K3 实时模型不可用，当前分析未执行。请检查服务端模型配置或网络后重试。",
+        recoverable: true,
+        suggested_action:
+          "确认 MODEL_BASE_URL、MODEL_NAME 和 MODEL_API_KEY 已在服务端配置",
+      },
+      meta: { request_id: crypto.randomUUID() },
+    });
+  }
   const task: Task = {
     id,
-    status: fallback ? "fallback" : "draft",
+    status: "draft",
     question: body.question,
     context: body.context,
-    fallback,
     steps: [
       "正在确认分析范围",
       "正在查询指标数据",
@@ -782,7 +787,7 @@ app.post("/api/analysis/tasks", async (req, reply) => {
       "正在检索业务知识",
       "正在生成分析草稿",
     ].map((label, i) => ({ id: `S${i + 1}`, label, status: "pending" })),
-    result: enriched.result,
+    result,
   };
   tasks.set(id, task);
   return reply.code(201).send(response(task));
@@ -826,10 +831,6 @@ app.get("/api/analysis/tasks/:id/events", async (req, reply) => {
       return;
     }
     clearInterval(timer);
-    if (task.fallback)
-      send("analysis.fallback", {
-        reason: "演示保障模式：已加载已校验的缓存分析结果",
-      });
     send("analysis.draft", task.result);
     send("task.completed", { taskId: task.id });
     reply.raw.end();
@@ -914,15 +915,13 @@ app.patch("/api/tasks/drafts/:id", async (req, reply) => {
     (task) => task.id === (req.params as any).id,
   );
   if (index < 0)
-    return reply
-      .code(404)
-      .send({
-        error: {
-          code: "TASK_NOT_FOUND",
-          message: "督办任务草稿不存在",
-          recoverable: true,
-        },
-      });
+    return reply.code(404).send({
+      error: {
+        code: "TASK_NOT_FOUND",
+        message: "督办任务草稿不存在",
+        recoverable: true,
+      },
+    });
   const body = z
     .object({
       title: z.string().min(1),
@@ -961,25 +960,16 @@ app.post("/api/simulation/tax-profit", async (req) => {
 app.get("/api/demo/health", async () =>
   response({
     api: "healthy",
-    model: mode === "cache" ? "cache" : "auto fallback ready",
-    cache: "ready",
+    model: hasLiveModel() ? "Kimi K3 已配置" : "Kimi K3 未配置",
+    modelRequired: true,
     scenarioId,
     dataVersion,
-    mode,
   }),
 );
-app.post("/api/demo/mode", async (req) => {
-  const body = z
-    .object({ mode: z.enum(["auto", "cache", "live"]) })
-    .parse(req.body);
-  mode = body.mode;
-  return response({ mode });
-});
 app.post("/api/demo/reset", async () => {
   tasks = new Map();
   reports = [];
   businessTasks = [];
-  mode = "auto";
   return response({ reset: true, message: "已恢复固定演示场景" });
 });
 
