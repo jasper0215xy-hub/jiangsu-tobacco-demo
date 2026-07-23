@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "concurrently -n API,WEB -c blue,cyan \"npm run dev -w @demo/server\" \"npm run dev -w @demo/web\"",
     "build": "npm run build -w @demo/contracts && npm run build -w @demo/server && npm run build -w @demo/web",
+    "build:site": "node scripts/build-site.mjs",
     "test": "npm run test -w @demo/server && npm run test -w @demo/web",
     "test:e2e": "playwright test",
     "lint": "npm run typecheck -w @demo/contracts && npm run typecheck -w @demo/server && npm run typecheck -w @demo/web",
