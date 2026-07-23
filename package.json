@@ -1,0 +1,20 @@
+{
+  "name": "jiangsu-tobacco-demo",
+  "private": true,
+  "version": "0.6.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -n API,WEB -c blue,cyan \"npm run dev -w @demo/server\" \"npm run dev -w @demo/web\"",
+    "build": "npm run build -w @demo/contracts && npm run build -w @demo/server && npm run build -w @demo/web",
+    "test": "npm run test -w @demo/server && npm run test -w @demo/web",
+    "test:e2e": "playwright test",
+    "lint": "npm run typecheck -w @demo/contracts && npm run typecheck -w @demo/server && npm run typecheck -w @demo/web",
+    "demo:reset": "node scripts/reset-demo.mjs",
+    "demo:health": "node scripts/health-check.mjs",
+    "demo:start": "npm run dev"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "concurrently": "^9.1.2"
+  }
+}
