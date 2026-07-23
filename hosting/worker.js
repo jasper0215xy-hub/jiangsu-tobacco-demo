@@ -188,8 +188,11 @@ const send = (data, status = 200) =>
       "Access-Control-Allow-Origin": "*",
     },
   });
-const error = (message, status = 400) =>
-  send({ error: { code: "DEMO_ERROR", message, recoverable: true } }, status);
+const error = (message, status = 400, details = {}) =>
+  send(
+    { error: { code: "DEMO_ERROR", message, recoverable: true, ...details } },
+    status,
+  );
 const statusOf = (metric, value, target) =>
   metric.code === "inventory_status_index"
     ? value > target + 5
@@ -492,10 +495,18 @@ async function api(request, url, env) {
         analyse(body.context?.data_overrides, body.context?.scenario_id),
         env,
       );
-    } catch {
+    } catch (caught) {
+      const modelError =
+        caught instanceof Error &&
+        /^KIMI_MODEL_(HTTP_\d+|NOT_CONFIGURED|INVALID_RESPONSE)$/.test(
+          caught.message,
+        )
+          ? caught.message
+          : "KIMI_MODEL_RESPONSE_ERROR";
       return error(
         "Kimi K3 实时模型不可用，当前分析未执行。请检查服务端模型配置或网络后重试。",
         503,
+        { model_error: modelError },
       );
     }
     const task = {

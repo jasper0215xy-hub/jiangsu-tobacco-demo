@@ -762,12 +762,20 @@ app.post("/api/analysis/tasks", async (req, reply) => {
   try {
     result = await enrichWithKimi(base);
   } catch (error) {
+    const modelError =
+      error instanceof Error &&
+      /^KIMI_MODEL_(HTTP_\d+|NOT_CONFIGURED|INVALID_RESPONSE)$/.test(
+        error.message,
+      )
+        ? error.message
+        : "KIMI_MODEL_RESPONSE_ERROR";
     return reply.code(503).send({
       error: {
         code: "KIMI_LIVE_MODEL_UNAVAILABLE",
         message:
           "Kimi K3 实时模型不可用，当前分析未执行。请检查服务端模型配置或网络后重试。",
         recoverable: true,
+        model_error: modelError,
         suggested_action:
           "确认 MODEL_BASE_URL、MODEL_NAME 和 MODEL_API_KEY 已在服务端配置",
       },
