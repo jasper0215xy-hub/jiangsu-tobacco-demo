@@ -24,7 +24,7 @@ const staticAssets = Object.fromEntries(
 );
 const worker = readFileSync("hosting/worker.js", "utf8").replace(
   "__STATIC_ASSETS__",
-  JSON.stringify(staticAssets),
+  () => JSON.stringify(staticAssets),
 );
 writeFileSync("dist/server/index.js", worker);
 console.log("托管站点构建完成");
