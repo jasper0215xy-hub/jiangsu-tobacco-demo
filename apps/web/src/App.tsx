@@ -1035,6 +1035,7 @@ function Agent() {
         body: JSON.stringify({
           confirmation_note: "已核对演示指标、证据及分析假设",
           confirmed_by: "演示分析人员",
+          context: task.context,
           edited_result: {
             ...task.result,
             overallJudgement: edit || task.result.overallJudgement,
@@ -1052,7 +1053,13 @@ function Agent() {
     try {
       const r = await api("/api/reports/drafts", {
         method: "POST",
-        body: JSON.stringify({ analysisTaskId: task.id }),
+        body: JSON.stringify({
+          analysisTaskId: task.id,
+          analysisResult: task.result,
+          context: task.context,
+          confirmed: task.status === "confirmed",
+          confirmedBy: task.confirmedBy,
+        }),
       });
       queryClient.invalidateQueries({ queryKey: ["portal"] });
       message.success(`已保存：${r.title}`);
@@ -1067,6 +1074,10 @@ function Agent() {
         body: JSON.stringify({
           analysisTaskId: task.id,
           riskId: task.result.risks[0]?.id,
+          analysisResult: task.result,
+          context: task.context,
+          confirmed: task.status === "confirmed",
+          confirmedBy: task.confirmedBy,
         }),
       });
       queryClient.invalidateQueries({ queryKey: ["portal"] });
@@ -1080,7 +1091,7 @@ function Agent() {
     try {
       const saved = await api(`/api/tasks/drafts/${taskDraft.id}`, {
         method: "PATCH",
-        body: JSON.stringify(values),
+        body: JSON.stringify({ ...values, sourceDraft: taskDraft }),
       });
       setTaskDraft(saved);
       setTaskDrawer(false);

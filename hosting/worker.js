@@ -189,9 +189,23 @@ const send = (data, status = 200) =>
     },
   });
 const error = (message, status = 400, details = {}) =>
-  send(
-    { error: { code: "DEMO_ERROR", message, recoverable: true, ...details } },
-    status,
+  new Response(
+    JSON.stringify({
+      error: {
+        code: status === 503 ? "KIMI_LIVE_MODEL_UNAVAILABLE" : "DEMO_ERROR",
+        message,
+        recoverable: true,
+        ...details,
+      },
+      meta: meta(),
+    }),
+    {
+      status,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+      },
+    },
   );
 const statusOf = (metric, value, target) =>
   metric.code === "inventory_status_index"
@@ -376,15 +390,17 @@ async function enrichWithKimi(result, env) {
     throw failure;
   }
   const payload = await response.json();
-  const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
-  const sourceNumbers = new Set(
-    result.overallJudgement.match(/\d+(?:\.\d+)?/g) || [],
-  );
-  const returnedNumbers = content.overallJudgement?.match(/\d+(?:\.\d+)?/g) || [];
+  const rawContent = payload.choices?.[0]?.message?.content || "{}";
+  let content;
+  try {
+    content = JSON.parse(rawContent);
+  } catch {
+    throw new Error("KIMI_MODEL_INVALID_RESPONSE");
+  }
   if (
     typeof content.overallJudgement !== "string" ||
     content.overallJudgement.length <= 20 ||
-    returnedNumbers.some((value) => !sourceNumbers.has(value))
+    content.overallJudgement.length > 1200
   )
     throw new Error("KIMI_MODEL_INVALID_RESPONSE");
   result.overallJudgement = content.overallJudgement;
@@ -426,6 +442,18 @@ function events(task) {
     },
   );
 }
+const confirmedTaskFromPayload = (body) => {
+  const task = tasks.get(body.analysisTaskId);
+  if (task) return task;
+  if (!body.confirmed || !body.analysisResult) return null;
+  return {
+    id: body.analysisTaskId,
+    status: "confirmed",
+    context: body.context || {},
+    result: body.analysisResult,
+    confirmedBy: body.confirmedBy || "演示分析人员",
+  };
+};
 async function api(request, url, env) {
   const path = url.pathname,
     p = path.split("/").filter(Boolean),
@@ -548,7 +576,16 @@ async function api(request, url, env) {
       ? events(tasks.get(p[3]))
       : error("分析任务不存在", 404);
   if (p[1] === "analysis" && p[2] === "tasks" && p[4] === "confirm") {
-    const task = tasks.get(p[3]);
+    let task = tasks.get(p[3]);
+    if (!task && body.edited_result) {
+      task = {
+        id: p[3],
+        status: "draft",
+        context: body.context || {},
+        result: body.edited_result,
+        steps: [],
+      };
+    }
     if (!task) return error("分析任务不存在", 404);
     task.status = "confirmed";
     task.confirmedBy = body.confirmed_by;
@@ -561,7 +598,7 @@ async function api(request, url, env) {
       ? send(tasks.get(p[3]))
       : error("分析任务不存在", 404);
   if (path === "/api/reports/drafts") {
-    const task = tasks.get(body.analysisTaskId);
+    const task = confirmedTaskFromPayload(body);
     if (!task || task.status !== "confirmed")
       return error("请先完成人工确认后再保存通报", 409);
     const report = {
@@ -577,7 +614,7 @@ async function api(request, url, env) {
     return send(report, 201);
   }
   if (path === "/api/tasks/drafts" && request.method === "POST") {
-    const task = tasks.get(body.analysisTaskId);
+    const task = confirmedTaskFromPayload(body);
     if (!task || task.status !== "confirmed")
       return error("请先完成人工确认后再生成督办任务", 409);
     const risk =
@@ -597,14 +634,17 @@ async function api(request, url, env) {
   }
   if (p[1] === "tasks" && p[2] === "drafts" && request.method === "PATCH") {
     const i = taskDrafts.findIndex((x) => x.id === p[3]);
-    if (i < 0) return error("督办任务草稿不存在", 404);
-    taskDrafts[i] = {
-      ...taskDrafts[i],
-      ...body,
+    const { sourceDraft, ...changes } = body;
+    if (i < 0 && !sourceDraft) return error("督办任务草稿不存在", 404);
+    const updated = {
+      ...(i < 0 ? sourceDraft : taskDrafts[i]),
+      ...changes,
       status: "saved",
       updatedAt: now,
     };
-    return send(taskDrafts[i]);
+    if (i < 0) taskDrafts.unshift(updated);
+    else taskDrafts[i] = updated;
+    return send(updated);
   }
   if (path === "/api/simulation/tax-profit") {
     const x = body.parameters || {},

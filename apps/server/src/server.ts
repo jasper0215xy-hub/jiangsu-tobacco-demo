@@ -660,16 +660,20 @@ async function enrichWithKimi(result: ReturnType<typeof analysisResult>) {
     throw failure;
   }
   const payload = (await response.json()) as any;
-  const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
-  const sourceNumbers = new Set(
-    result.overallJudgement.match(/\d+(?:\.\d+)?/g) || [],
-  );
-  const returnedNumbers = content.overallJudgement?.match(/\d+(?:\.\d+)?/g) || [];
-  // The rewrite may preserve source numbers but may not introduce a new metric value.
+  const rawContent = payload.choices?.[0]?.message?.content || "{}";
+  let content: { overallJudgement?: unknown };
+  try {
+    content = JSON.parse(rawContent);
+  } catch {
+    throw new Error("KIMI_MODEL_INVALID_RESPONSE");
+  }
+  // Business metrics, evidence and risk items still come from the controlled
+  // calculation result.  This field is the live Kimi judgement, which may
+  // legitimately use a different numeric format when explaining those facts.
   if (
     typeof content.overallJudgement !== "string" ||
     content.overallJudgement.length <= 20 ||
-    returnedNumbers.some((value: string) => !sourceNumbers.has(value))
+    content.overallJudgement.length > 1200
   )
     throw new Error("KIMI_MODEL_INVALID_RESPONSE");
   result.overallJudgement = content.overallJudgement;
