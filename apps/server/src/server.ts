@@ -646,7 +646,19 @@ async function enrichWithKimi(result: ReturnType<typeof analysisResult>) {
       ],
     }),
   });
-  if (!response.ok) throw new Error(`KIMI_MODEL_HTTP_${response.status}`);
+  if (!response.ok) {
+    const failurePayload = await response.json().catch(() => null);
+    const failure = new Error(`KIMI_MODEL_HTTP_${response.status}`) as Error & {
+      safeDetail?: string;
+    };
+    failure.safeDetail = String(
+      (failurePayload as { error?: { message?: unknown } } | null)?.error
+        ?.message || "Upstream request rejected",
+    )
+      .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
+      .slice(0, 240);
+    throw failure;
+  }
   const payload = (await response.json()) as any;
   const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
   // No digits prevents the model from adding unverified metric values to the evidence-bound result.
@@ -768,6 +780,11 @@ app.post("/api/analysis/tasks", async (req, reply) => {
       )
         ? error.message
         : "KIMI_MODEL_RESPONSE_ERROR";
+    const modelErrorDetail =
+      error instanceof Error &&
+      typeof (error as Error & { safeDetail?: unknown }).safeDetail === "string"
+        ? (error as Error & { safeDetail: string }).safeDetail
+        : undefined;
     return reply.code(503).send({
       error: {
         code: "KIMI_LIVE_MODEL_UNAVAILABLE",
@@ -775,6 +792,7 @@ app.post("/api/analysis/tasks", async (req, reply) => {
           "Kimi K3 实时模型不可用，当前分析未执行。请检查服务端模型配置或网络后重试。",
         recoverable: true,
         model_error: modelError,
+        model_error_detail: modelErrorDetail,
         suggested_action:
           "确认 MODEL_BASE_URL、MODEL_NAME 和 MODEL_API_KEY 已在服务端配置",
       },

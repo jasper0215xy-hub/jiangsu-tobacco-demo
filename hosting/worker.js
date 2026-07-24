@@ -365,7 +365,16 @@ async function enrichWithKimi(result, env) {
       }),
     },
   );
-  if (!response.ok) throw new Error(`KIMI_MODEL_HTTP_${response.status}`);
+  if (!response.ok) {
+    const failurePayload = await response.json().catch(() => null);
+    const failure = new Error(`KIMI_MODEL_HTTP_${response.status}`);
+    failure.safeDetail = String(
+      failurePayload?.error?.message || "Upstream request rejected",
+    )
+      .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
+      .slice(0, 240);
+    throw failure;
+  }
   const payload = await response.json();
   const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
   if (
@@ -502,10 +511,14 @@ async function api(request, url, env) {
         )
           ? caught.message
           : "KIMI_MODEL_RESPONSE_ERROR";
+      const modelErrorDetail =
+        caught instanceof Error && typeof caught.safeDetail === "string"
+          ? caught.safeDetail
+          : undefined;
       return error(
         "Kimi K3 实时模型不可用，当前分析未执行。请检查服务端模型配置或网络后重试。",
         503,
-        { model_error: modelError },
+        { model_error: modelError, model_error_detail: modelErrorDetail },
       );
     }
     const task = {
