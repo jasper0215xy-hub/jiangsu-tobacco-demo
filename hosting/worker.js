@@ -1,3 +1,4 @@
+const staticAssets = __STATIC_ASSETS__;
 const now = "2026-07-01 08:00";
 const metrics = [
   {
@@ -699,6 +700,21 @@ export default {
         },
       });
     if (url.pathname.startsWith("/api/")) return api(request, url, env);
+    const inlineAsset = staticAssets[url.pathname];
+    if (inlineAsset)
+      return new Response(inlineAsset, {
+        headers: {
+          "Content-Type": url.pathname.endsWith(".js")
+            ? "application/javascript; charset=utf-8"
+            : url.pathname.endsWith(".css")
+              ? "text/css; charset=utf-8"
+              : "text/html; charset=utf-8",
+        },
+      });
+    if (!url.pathname.includes(".") && staticAssets["/index.html"])
+      return new Response(staticAssets["/index.html"], {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     const asset = await env.ASSETS.fetch(request);
     return asset.status !== 404 || url.pathname.includes(".")
       ? asset
