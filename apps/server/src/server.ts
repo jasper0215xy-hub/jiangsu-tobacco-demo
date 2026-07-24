@@ -661,11 +661,15 @@ async function enrichWithKimi(result: ReturnType<typeof analysisResult>) {
   }
   const payload = (await response.json()) as any;
   const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
-  // No digits prevents the model from adding unverified metric values to the evidence-bound result.
+  const sourceNumbers = new Set(
+    result.overallJudgement.match(/\d+(?:\.\d+)?/g) || [],
+  );
+  const returnedNumbers = content.overallJudgement?.match(/\d+(?:\.\d+)?/g) || [];
+  // The rewrite may preserve source numbers but may not introduce a new metric value.
   if (
     typeof content.overallJudgement !== "string" ||
     content.overallJudgement.length <= 20 ||
-    /\d/.test(content.overallJudgement)
+    returnedNumbers.some((value: string) => !sourceNumbers.has(value))
   )
     throw new Error("KIMI_MODEL_INVALID_RESPONSE");
   result.overallJudgement = content.overallJudgement;

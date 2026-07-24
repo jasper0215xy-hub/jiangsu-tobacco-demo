@@ -377,10 +377,14 @@ async function enrichWithKimi(result, env) {
   }
   const payload = await response.json();
   const content = JSON.parse(payload.choices?.[0]?.message?.content || "{}");
+  const sourceNumbers = new Set(
+    result.overallJudgement.match(/\d+(?:\.\d+)?/g) || [],
+  );
+  const returnedNumbers = content.overallJudgement?.match(/\d+(?:\.\d+)?/g) || [];
   if (
     typeof content.overallJudgement !== "string" ||
     content.overallJudgement.length <= 20 ||
-    /\d/.test(content.overallJudgement)
+    returnedNumbers.some((value) => !sourceNumbers.has(value))
   )
     throw new Error("KIMI_MODEL_INVALID_RESPONSE");
   result.overallJudgement = content.overallJudgement;
