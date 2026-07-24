@@ -350,7 +350,6 @@ async function enrichWithKimi(result, env) {
       },
       body: JSON.stringify({
         model: env.MODEL_NAME || "kimi-k3",
-        temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
           {
